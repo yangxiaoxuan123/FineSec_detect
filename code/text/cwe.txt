@@ -1,0 +1,61 @@
+CWE Official Names and Descriptions
+CWE-119: Improper Restriction of Operations within the Bounds of a Memory Buffer
+Description: The software performs operations on a memory buffer, but it does not properly restrict operations within the intended bounds of the buffer. This can lead to buffer overflows, which may allow an attacker to execute arbitrary code, corrupt data, or cause a denial of service.
+CWE-122: Heap-based Buffer Overflow
+Description: A heap-based buffer overflow occurs when the software writes more data to a heap-allocated buffer than the buffer can hold. Heap buffers are dynamically allocated in the heap memory space, and an overflow here can corrupt adjacent heap memory, potentially leading to arbitrary code execution, data corruption, or program crashes.
+CWE-125: Out-of-Bounds Read
+Description: The software reads data from a memory location that is outside the intended bounds of the memory buffer. This can expose sensitive information (such as memory contents) to an attacker, or cause the program to crash if the out-of-bounds location is invalid. In some cases, it may also lead to further memory corruption.
+CWE-787: Out-of-Bounds Write
+Description: The software writes data to a memory location that is outside the intended bounds of the memory buffer. This can corrupt adjacent memory, which may result in arbitrary code execution, data integrity issues, or a denial of service (e.g., program crash). It is a common type of memory corruption vulnerability.
+CWE-415: Double Free
+Description: The software attempts to free a memory block that has already been freed. This can corrupt the heap memory management structures, leading to heap corruption. An attacker may exploit this to execute arbitrary code, cause data corruption, or trigger a denial of service.
+CWE-416: Use After Free
+Description: The software continues to use a pointer to a memory block after that block has been freed. This can lead to accessing or modifying memory that has been reallocated for other purposes, resulting in memory corruption, arbitrary code execution, or program crashes.
+CWE-476: NULL Pointer Dereference
+Description: The software dereferences a pointer that is NULL (i.e., points to no valid memory location). This typically causes the program to crash, resulting in a denial of service. In some cases, if an attacker can control the context of the NULL pointer dereference, it may lead to more severe issues such as code execution.
+CWE-20: Improper Input Validation
+Description: The software does not properly validate input data before using it in a critical operation. This can allow attackers to provide malicious input that bypasses security controls, modifies data, causes unexpected behavior, or triggers other vulnerabilities (e.g., injection attacks, buffer overflows).
+CWE-77: Improper Neutralization of Special Elements used in a Command ('Command Injection')
+Description: The software constructs a command string using externally influenced input without properly neutralizing special elements that can modify the intended command. An attacker can exploit this to execute arbitrary commands on the underlying system with the privileges of the software, leading to unauthorized access or system compromise.
+CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')
+Description: A specific type of command injection where the software incorporates user-provided input into an operating system command without proper sanitization. Attackers can inject additional commands or modify the existing command to execute arbitrary OS-level operations, potentially gaining full control of the system.
+CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')
+Description: The software includes untrusted data in a web page without proper neutralization, allowing an attacker to inject malicious scripts into the page viewed by other users. This can lead to theft of session cookies, credential hijacking, defacement of web content, or other client-side attacks.
+CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')
+Description: The software uses user-provided input to construct a file path without properly restricting the path to a intended directory. Attackers can use special characters (e.g., "../") to traverse outside the restricted directory, accessing or modifying sensitive files (e.g., configuration files, system files) that are not intended to be accessible.
+CWE-94: Improper Control of Generation of Code ('Code Injection')
+Description: The software dynamically generates code using user-controlled input without proper validation or sanitization. Attackers can inject malicious code that is executed by the software, potentially leading to arbitrary code execution, data exfiltration, or system compromise. This differs from command injection in that it involves injecting code into the software's own execution context.
+CWE-59: Improper Link Resolution Before File Access ('Link Following')
+Description: The software accesses a file or directory based on a pathname that contains a symbolic link, but it does not properly resolve the symbolic link before accessing the target. An attacker can create a symbolic link that points to a sensitive file, tricking the software into accessing or modifying the unintended target, leading to data disclosure or corruption.
+CWE-434: Unrestricted Upload of File with Dangerous Type
+Description: The software allows users to upload files without properly verifying the file type or content. Attackers can upload files with dangerous types (e.g., executable scripts, malware) and then cause the server to execute or process these files, leading to code execution, server compromise, or other malicious activities.
+CWE-400: Uncontrolled Resource Consumption ('Resource Exhaustion')
+Description: The software does not properly control the consumption of system resources (e.g., CPU, memory, disk space, network bandwidth) when processing user input or requests. An attacker can exploit this by sending excessive or specially crafted requests to exhaust resources, leading to a denial of service where the software or system becomes unresponsive.
+CWE-401: Missing Release of Resource after Effective Lifetime ('Resource Leak')
+Description: The software fails to release a resource (e.g., memory, file handles, network connections, database connections) after it is no longer needed. Over time, repeated resource leaks can exhaust available resources, leading to performance degradation, application crashes, or denial of service.
+CWE-835: Loop with Unreachable Exit Condition ('Infinite Loop')
+Description: The software contains a loop whose exit condition cannot be reached under certain circumstances, causing the loop to run indefinitely. This consumes system resources (e.g., CPU time) continuously, leading to resource exhaustion, application unresponsiveness, or denial of service.
+CWE-362: Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')
+Description: The software allows multiple threads or processes to access a shared resource (e.g., variable, file, database record) concurrently, but it does not use proper synchronization to prevent conflicting access. An attacker can exploit the timing difference between concurrent operations to cause data corruption, incorrect results, or other unexpected behavior.
+CWE-189: Numeric Errors
+Description: The software performs numerical operations without proper handling of potential errors (e.g., integer overflow, integer underflow, division by zero, floating-point inaccuracies). These errors can lead to incorrect calculations, data corruption, buffer overflows (if the numeric value is used to control buffer operations), or other security vulnerabilities.
+CWE-190: Integer Overflow or Wraparound
+Description: The software performs an arithmetic operation on an integer value, and the result exceeds the maximum (or minimum) value that the integer type can represent. This causes the value to wrap around to an unexpected value (e.g., a large positive value becomes a small negative value). If the overflowed value is used to control memory allocation, buffer sizes, or other critical operations, it can lead to buffer overflows or other security issues.
+CWE-862: Missing Authorization
+Description: The software does not verify whether a user is authorized to perform a particular action before allowing the action to proceed. This can allow unauthorized users to access sensitive functionality, modify data, or perform other actions that should be restricted to privileged users.
+CWE-863: Incorrect Authorization
+Description: The software implements authorization checks, but the checks are incorrect or incomplete. For example, it may check for one type of privilege but not another, or it may allow access based on a flawed condition. This can allow users to bypass intended access controls and perform actions they are not authorized to do.
+CWE-287: Improper Authentication
+Description: The software does not properly verify the identity of a user or entity before granting access to protected resources or functionality. Examples include allowing weak passwords, not validating session tokens correctly, or bypassing authentication entirely under certain conditions. This can allow attackers to impersonate legitimate users and gain unauthorized access.
+CWE-284: Improper Access Control
+Description: The software does not implement or enforce adequate access controls to prevent unauthorized users from accessing or modifying sensitive resources. This is a broad category that includes issues such as missing authorization, incorrect authorization, or failure to restrict access to files, directories, or system functions.
+CWE-269: Improper Privilege Management
+Description: The software does not properly manage user privileges, such as granting excessive privileges to a user, failing to revoke privileges when they are no longer needed, or allowing a user to escalate their privileges beyond what is intended. This can allow users to perform actions that are outside their intended role, leading to unauthorized access or system compromise.
+CWE-276: Incorrect Default Permissions
+Description: The software sets incorrect default permissions for files, directories, or other resources. For example, a file that should be readable only by the owner is set to be readable by all users by default. This can allow unauthorized users to access or modify sensitive resources without having to exploit any other vulnerability.
+CWE-295: Improper Certificate Validation
+Description: The software does not properly validate the authenticity or integrity of a digital certificate when establishing a secure connection (e.g., TLS/SSL). This can allow attackers to present forged or invalid certificates, leading to man-in-the-middle attacks, interception of sensitive data, or impersonation of legitimate servers.
+CWE-310: Cryptographic Issues
+Description: The software has issues related to the use of cryptography, such as using weak encryption algorithms, hardcoding cryptographic keys, improper key management, or failing to use cryptography when it is needed. These issues can allow attackers to decrypt sensitive data, forge digital signatures, or bypass cryptographic protections.
+CWE-200: Exposure of Sensitive Information to an Unauthorized Actor
+Description: The software reveals sensitive information (e.g., passwords, credit card numbers, personal data, session IDs) to individuals or entities that are not authorized to access it. This can occur through insecure logging, error messages that include sensitive data, insecure transmission of data (without encryption), or improper storage of sensitive information.
