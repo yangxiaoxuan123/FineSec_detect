@@ -1,0 +1,57 @@
+bufferoverflow（通用缓冲区溢出，CWE-119）
+stackoverflow（栈溢出，CWE-119 子类）
+heapoverflow（堆溢出，CWE-122）
+bufferoverrun（缓冲区越界，CWE-119 同义表述）
+outofboundsaccess（越界访问，涵盖 CWE-125/CWE-787）
+outofboundsread
+outofboundswrite
+memoryaccess（无效内存访问，CWE-125/CWE-787/CWE-476 通用）
+memorycorruption（内存损坏，CWE-119/CWE-415/CWE-416 等通用）
+doublefree（双重释放，CWE-415）
+useafterfree（释放后使用，CWE-416）
+nullptrderef（空指针解引用，CWE-476 简写）
+inputvalidation（输入验证失败，CWE-20）
+commandinjection（命令注入，CWE-77）
+oscommandinject（操作系统命令注入，CWE-78）
+shellinjection（Shell 注入，CWE-78 常见场景）
+xss（跨站脚本，CWE-79 简写）
+crosssitescript（跨站脚本，CWE-79 完整形式）
+pathtraversal（路径遍历，CWE-22）
+directorytraversal（目录遍历，CWE-22 同义表述）
+codeinjection（代码注入，CWE-94）
+remotecodeexec（远程代码执行，CWE-94 后果）
+symlinkfollowing（符号链接跟随，CWE-59）
+unrestrictedupload（无限制文件上传，CWE-434）
+maliciousfileupload（恶意文件上传，CWE-434 场景）
+resourceexhaustion（资源耗尽，CWE-400）
+dosattack（拒绝服务攻击，CWE-400 后果）
+resourceleak（资源泄漏，CWE-401）
+memoryleak（内存泄漏，CWE-401 子类）
+filehandleleak（文件句柄泄漏，CWE-401 子类）
+infiniteloop（无限循环，CWE-835）
+endlessloop（死循环，CWE-835 同义表述）
+racecondition（竞态条件，CWE-362）
+concurrentaccess（并发访问问题，CWE-362 通用）
+numericoverflow（数值溢出，CWE-189/CWE-190）
+integerunderflow（整数下溢，CWE-189）
+integeroverflow
+numericerrors
+divisionbyzero（除零错误，CWE-189 场景）
+missingauthorization（缺失授权，CWE-862）
+unauthorizedaccess（未授权访问，CWE-862 后果）
+incorrectauth（错误授权，CWE-863）
+authbypass（授权绕过，CWE-863 场景）
+brokenauth（认证失效，CWE-287）
+weakauthentication（弱认证，CWE-287）
+accesscontrolbypass（访问控制绕过，CWE-284）
+privilegeescalation（权限提升，CWE-269 后果）
+excessiveprivilege（权限过高，CWE-269）
+defaultperms（默认权限错误，CWE-276 简写）
+badcertverify（证书验证错误，CWE-295）
+invalidcert（无效证书，CWE-295 场景）
+cryptoweakness（加密弱点，CWE-310）
+weakencryption（弱加密，CWE-310）
+hardcodedkeys（硬编码密钥，CWE-310 场景）
+infoleak（信息泄漏，CWE-200 简写）
+sensitiveinfoleak（敏感信息泄漏，CWE-200）
+datadisclosure（数据泄露，CWE-200 同义表述）
