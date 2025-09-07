@@ -1,6 +1,6 @@
 | Model List              | Base Model                          | Model Source|
 |-------------------------|---------------------------------------|--------------|
-| adapter_model.safetensors | Adapter 模型权重文件                  | 可选         |
-| adapter_config.json     | Adapter 结构配置（层数、维度等）      | 是           |
-| tokenizer.json          | 分词器核心规则与词汇表                | 是           |
+| llama-1b-vuln-detector  | meta-llama/Meta-Llama-3.2-1B-Instruct                | https://huggingface.co/ababa12345/llama-1b-vuln-detector         |
+| llama-3b-vuln-detector       | meta-llama/Meta-Llama-3.2-3B-Instruct    | https://huggingface.co/ababa12345/llama-3b-vuln-detector     |
+| llama-8b-vuln-detector           | meta-llama/Meta-Llama-3.1-8B-Instruct             |https://huggingface.co/ababa12345/llama-vuln-detector       |
 | README.md               | 项目说明文档（使用方法、依赖等）      | 是           |
