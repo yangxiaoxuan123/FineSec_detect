@@ -1,6 +1,3 @@
-| Model List              | Base Model                          | Model Source|
-|-------------------------|---------------------------------------|--------------|
-| llama-1b-vuln-detector  | meta-llama/Meta-Llama-3.2-1B-Instruct                | https://huggingface.co/ababa12345/llama-1b-vuln-detector         |
-| llama-3b-vuln-detector       | meta-llama/Meta-Llama-3.2-3B-Instruct    | https://huggingface.co/ababa12345/llama-3b-vuln-detector     |
-| llama-8b-vuln-detector           | meta-llama/Meta-Llama-3.1-8B-Instruct             |https://huggingface.co/ababa12345/llama-vuln-detector       |
-| README.md               | 项目说明文档（使用方法、依赖等）      | 是           |
+The growing complexity of software systems has led to an increasing number of security vulnerabilities, which, if exploited, can cause severe security breaches and substantial economic losses. Code vulnerability detection is therefore critical for ensuring software security and reliability. Recent advances in Large Language Models (LLMs) have introduced powerful language understanding and generation capabilities that extend beyond natural language processing to software security applications. This paper presents FineSec, an LLM-based framework for efficient and accurate code vulnerability detection. FineSec employs knowledge distillation to transfer domain-specific insights from large teacher models to lightweight student models, enabling high detection accuracy with reduced computational overhead. The framework adopts a single-task learning paradigm that integrates data preparation, training, evaluation, and continuous learning into a unified workflow. Extensive experiments on C/C++ language datasets demonstrate that FineSec outperforms both base models and larger LLMs in identifying complex vulnerabilities and logical flaws. These results position FineSec as a practical, secure, and scalable solution for real-world software security.
+
+
