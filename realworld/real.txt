@@ -1,3 +1,5 @@
-The detailed real-world dataset can be seen at 
-链接：https://pan.quark.cn/s/8ca7aac99500
-提取码：68eC
+The detailed real-world dataset from CVEFIXES can be seen at:
+Link: https://pan.quark.cn/s/8ca7aac99500
+Extraction code: 68eC
+
+SQL files are available at this link.
