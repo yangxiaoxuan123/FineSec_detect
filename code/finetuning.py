@@ -34,17 +34,18 @@ fourbit_models = [
     "unsloth/llama-3-8b-bnb-4bit", # [NEW] 15 Trillion token Llama-3
 ]
 
-selected_model = ""
+selected_model = "unsloth/llama-3-8b-bnb-4bit"
 print(f"Selected base model: {selected_model}")
 
 train_data_path = "./train_data.csv"
 val_data_path = "./val_data.csv"
 data_process_dir = "./data_process"
 output_root = "./iterative_training"
+security_terms_path = "./security_terms.txt"  # Path to security terms file
 os.makedirs(data_process_dir, exist_ok=True)
 os.makedirs(output_root, exist_ok=True)
 
-// dynamic adjustment
+# dynamic adjustment
 Lh = 0.8
 Ll = 0.3
 max_iterations = 5
@@ -69,7 +70,6 @@ print(f"Initial GPU memory usage: {start_gpu_memory} GB / Total memory: {max_gpu
 # ------------------------------------------------------------------------------
 # 2. Data Loading with Basic Cleaning
 # ------------------------------------------------------------------------------
-
 def load_and_basic_clean(iteration: int, refined_train_path: str = None, refined_val_path: str = None) -> tuple[Dataset, Dataset]:
     if iteration == 1 or refined_train_path is None:
         train_data = load_dataset('csv', data_files=train_data_path, split="train")
@@ -96,9 +96,10 @@ def load_and_basic_clean(iteration: int, refined_train_path: str = None, refined
     return train_data, val_data
 
 # ------------------------------------------------------------------------------
-# 3. Model Loading (with QLoRA Configuration)
+# 3. Model Loading (with QLoRA Configuration and Security Vocabulary Expansion)
 # ------------------------------------------------------------------------------
 def load_qlora_model(model_name: str) -> tuple[AutoModelForCausalLM, AutoTokenizer]:
+    # First load the base model and tokenizer
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=model_name,
         max_seq_length=2048,
@@ -107,6 +108,28 @@ def load_qlora_model(model_name: str) -> tuple[AutoModelForCausalLM, AutoTokeniz
         bitsandbytes_config=bnb_config,
     )
     
+    # Foundational Pre-pretraining: Expand vocabulary with security terms
+    print("Starting Foundational Pre-pretraining: Expanding vocabulary with security terms...")
+    
+    # Load security terms from file
+    if os.path.exists(security_terms_path):
+        with open(security_terms_path, 'r', encoding='utf-8') as f:
+            security_terms = [line.strip() for line in f if line.strip()]
+        
+        print(f"Loaded {len(security_terms)} security terms from {security_terms_path}")
+        
+        # Add security terms as special tokens
+        num_added_tokens = tokenizer.add_tokens(security_terms)
+        print(f"Added {num_added_tokens} security terms to the tokenizer vocabulary")
+        
+        # Resize model embedding to match new vocabulary size
+        if num_added_tokens > 0:
+            model.resize_token_embeddings(len(tokenizer))
+            print(f"Resized model embeddings to {len(tokenizer)} tokens")
+    else:
+        print(f"Security terms file not found at {security_terms_path}, skipping vocabulary expansion")
+    
+    # Configure LoRA
     peft_config = LoraConfig(
         r=16,
         lora_alpha=32,
@@ -360,7 +383,7 @@ while current_iteration <= max_iterations:
     elif current_loss > Lh:
         print(f"Iteration {current_iteration}: Lj > Lh, model failed to learn effectively, discarding!")
         print("Please check: 1. Data quality 2. Learning rate 3. Model compatibility")
-        next_train_path, next_val_path = prepare_next_iter_data(current_iteration)
+        next_train_path, next_val_path = prepare_next_iter_data(current_iteration, train_data, val_data)
         train_data, val_data = load_and_basic_clean(current_iteration + 1, next_train_path, next_val_path)
         current_iteration += 1
         del model
@@ -373,9 +396,9 @@ while current_iteration <= max_iterations:
         tokenizer.save_pretrained(temp_model_path)
         print(f"Temporary model saved to: {temp_model_path}")
         
-        refined_train, refined_val = prepare_next_iter_data(current_iteration)
+        next_train_path, next_val_path = prepare_next_iter_data(current_iteration, train_data, val_data)
         
-        train_data, val_data = load_and_basic_clean(current_iteration + 1, refined_train, refined_val)
+        train_data, val_data = load_and_basic_clean(current_iteration + 1, next_train_path, next_val_path)
         current_iteration += 1
         del model
         torch.cuda.empty_cache()
