@@ -1,207 +1,399 @@
+%%capture
+!pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"
+!pip install --no-deps bitsandbytes==0.41.1 peft==0.8.2 trl==0.7.4 accelerate==0.24.1 datasets==2.14.6
+
 import torch
-import json
 import os
+import time
 from datetime import datetime
+from datasets import load_dataset, Dataset
 from trl import SFTTrainer
 from transformers import (
-    TrainingArguments, 
-    AutoModelForCausalLM, 
-    AutoTokenizer
+    TrainingArguments,
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    BitsAndBytesConfig,
+    TextStreamer
 )
-from datasets import Dataset, load_dataset
+from peft import PeftModel, LoraConfig
+from unsloth import FastLanguageModel
+import wandb
 
+# ------------------------------------------------------------------------------
+# 1. Core Configuration
+# ------------------------------------------------------------------------------
 
-class IterativeFineTuner:
-    def __init__(self, config):
-        self.D = {0: config["initial_dataset"]} 
-        self.M = {0: config["domain_adapted_models"]}  
-        self.L_b = config["L_b"] 
-        self.L_l = config["L_l"]  
-        self.L_h = config["L_h"] 
-        
-        self.k = 0  
-        self.max_iterations = config.get("max_iterations", 10) 
-        self.output_dir = config.get("output_dir", "./iterative_finetune")
-        os.makedirs(self.output_dir, exist_ok=True)
-        
-        self.base_model_path = config["base_model_path"]
-        self.tokenizer = AutoTokenizer.from_pretrained(self.base_model_path)
-        self.tokenizer.pad_token = self.tokenizer.eos_token  
+fourbit_models = [
+    "unsloth/mistral-7b-bnb-4bit",
+    "unsloth/mistral-7b-instruct-v0.2-bnb-4bit",
+    "unsloth/llama-2-7b-bnb-4bit",
+    "unsloth/gemma-7b-bnb-4bit",
+    "unsloth/gemma-7b-it-bnb-4bit", # Instruct version of Gemma 7b
+    "unsloth/gemma-2b-bnb-4bit",
+    "unsloth/gemma-2b-it-bnb-4bit", # Instruct version of Gemma 2b
+    "unsloth/llama-3-8b-bnb-4bit", # [NEW] 15 Trillion token Llama-3
+]
 
-    def _compute_combined_loss(self, model, dataset):
-        y_true, y_pred = [], []  # 真实标签y_i、预测标签ŷ_i
-        r_true, r_pred = [], []  # 真实解释r_i、预测解释âr_i
-        
-        for item in dataset:
-            inputs = self.tokenizer(
-                item["x"], 
-                return_tensors="pt",
-                truncation=True,
-                max_length=1024  
-            ).to(model.device)
-            
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=200,
-                pad_token_id=self.tokenizer.pad_token_id
-            )
-            pred_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-            
-            pred_y, pred_r = self._parse_model_output(pred_text)
-            y_true.append(item["y"])
-            y_pred.append(pred_y)
-            r_true.append(item["r"])
-            r_pred.append(pred_r)
-        
-        label_loss = self._compute_label_loss(y_true, y_pred) 
-        function_loss = self._compute_function_loss(r_true, r_pred) 
-        combined_loss = 0.5 * label_loss + 0.5 * function_loss  
-        
-        return {
-            "L_j": combined_loss,      
-            "label_loss": label_loss  
+selected_model = ""
+print(f"Selected base model: {selected_model}")
+
+train_data_path = "./train_data.csv"
+val_data_path = "./val_data.csv"
+data_process_dir = "./data_process"
+output_root = "./iterative_training"
+os.makedirs(data_process_dir, exist_ok=True)
+os.makedirs(output_root, exist_ok=True)
+
+// dynamic adjustment
+Lh = 0.8
+Ll = 0.3
+max_iterations = 5
+current_iteration = 1
+best_loss = float("inf")
+best_model_path = None
+
+bnb_config = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_use_double_quant=True,
+    bnb_4bit_quant_type="fp4",
+    bnb_4bit_compute_dtype=torch.bfloat16
+)
+
+def get_gpu_memory() -> float:
+    return round(torch.cuda.memory_allocated() / 1024 / 1024 / 1024, 3)
+
+start_gpu_memory = get_gpu_memory()
+max_gpu_memory = round(torch.cuda.get_device_properties(0).total_memory / 1024 / 1024 / 1024, 3)
+print(f"Initial GPU memory usage: {start_gpu_memory} GB / Total memory: {max_gpu_memory} GB")
+
+# ------------------------------------------------------------------------------
+# 2. Data Loading with Basic Cleaning
+# ------------------------------------------------------------------------------
+def load_and_basic_clean(iteration: int, refined_train_path: str = None, refined_val_path: str = None) -> tuple[Dataset, Dataset]:
+    if iteration == 1 or refined_train_path is None:
+        train_data = load_dataset('csv', data_files=train_data_path, split="train")
+    else:
+        train_data = load_dataset('csv', data_files=refined_train_path, split="train")
+    
+    if iteration == 1 or refined_val_path is None:
+        val_data = load_dataset('csv', data_files=val_data_path, split="train")
+    else:
+        val_data = load_dataset('csv', data_files=refined_val_path, split="train")
+    
+    train_data = train_data.filter(lambda x: x["text"] is not None and len(str(x["text"]).strip()) > 50)
+    val_data = val_data.filter(lambda x: x["text"] is not None and len(str(x["text"]).strip()) > 50)
+    
+    train_data = train_data.unique("text")
+    val_data = val_data.unique("text")
+    
+    print(f"Data cleaning completed (Iteration {iteration}):")
+    print(f"   - Training set: {len(train_data)} samples")
+    print(f"   - Validation set: {len(val_data)} samples")
+    
+    assert "text" in train_data.column_names and "text" in val_data.column_names, \
+        "Training/validation set must contain 'text' column"
+    return train_data, val_data
+
+# ------------------------------------------------------------------------------
+# 3. Model Loading (with QLoRA Configuration)
+# ------------------------------------------------------------------------------
+def load_qlora_model(model_name: str) -> tuple[AutoModelForCausalLM, AutoTokenizer]:
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name=model_name,
+        max_seq_length=2048,
+        dtype=torch.bfloat16,
+        load_in_4bit=True,
+        bitsandbytes_config=bnb_config,
+    )
+    
+    peft_config = LoraConfig(
+        r=16,
+        lora_alpha=32,
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        lora_dropout=0.05,
+        bias="none",
+        task_type="CAUSAL_LM",
+        use_gradient_checkpointing="unsloth"
+    )
+    
+    model = FastLanguageModel.get_peft_model(model, peft_config)
+    model.print_trainable_parameters()
+    return model, tokenizer
+
+# ------------------------------------------------------------------------------
+# 4. Model Performance Testing
+# ------------------------------------------------------------------------------
+def test_model_performance(model, tokenizer, test_name: str = "Pre-training Test"):
+    print(f"\n================================ {test_name} ==================================")
+    FastLanguageModel.for_inference(model)
+    
+    eval_prompt = """List all the vulnerabilities in the following C/C++ code:
+int process_data(int* input_array, size_t array_size) {
+    size_t total_size = array_size * sizeof(int);
+    if (total_size < array_size) {
+        return -1;
+    }
+    
+    int* buffer = (int*)malloc(total_size);
+    if (!buffer) {
+        return -1;
+    }
+
+    for (size_t i = 0; i <= array_size; i++) {
+        if (i < array_size) {
+            buffer[i] = input_array[i] * 2;
         }
-
-
-    def _parse_model_output(self, pred_text):
-        pred_y = "UNKNOWN" 
-        pred_r = "No rationale parsed" 
-        if "LABEL:" in pred_text:
-            pred_y = pred_text.split("LABEL:")[-1].split("\n")[0].strip()
-        if "RATIONALE:" in pred_text:
-            pred_r = pred_text.split("RATIONALE:")[-1].strip()
-        return pred_y, pred_r
-
-    def _compute_label_loss(self, y_true, y_pred):
-        return sum(1 for t, p in zip(y_true, y_pred) if t != p) / len(y_true)
-
-    def _compute_function_loss(self, r_true, r_pred):
-        return sum(len(t) != len(p) for t, p in zip(r_true, r_pred)) / len(r_true)
-
-    def _fine_tune_models(self):
-        current_models = self.M[self.k]  # M(k)_s
-        current_dataset = self.D[self.k]  # D(k)
-        fine_tuned_models = []
-        
-        for idx, model in enumerate(current_models):
-            run_name = f"iter_{self.k}_model_{idx}"
-            train_args = TrainingArguments(
-                output_dir=os.path.join(self.output_dir, run_name),
-                per_device_train_batch_size=2,  # 通用配置
-                gradient_accumulation_steps=4,  # 通用配置
-                max_steps=300,  # 通用配置（算法未定义，仅保证流程）
-                learning_rate=2e-4,  # 通用配置
-                optim="adamw_8bit",  # QLoRA高效微调（算法提及参数高效技术）
-                logging_steps=10,
-                save_steps=100,
-                eval_steps=50,
-                fp16=not torch.cuda.is_bf16_supported(),
-                bf16=torch.cuda.is_bf16_supported(),
-                seed=3407,
-                report_to="none"  
-            )
-            
-            trainer = SFTTrainer(
-                model=model,
-                tokenizer=self.tokenizer,
-                train_dataset=current_dataset,
-                eval_dataset=current_dataset,
-                dataset_text_field="text",  
-                max_seq_length=1024,
-                packing=False
-            )
-      
-            trainer.train()
-            fine_tuned_models.append(model)
-        
-        return fine_tuned_models  # M(k)_ft
-
-
-    def run(self):
-        print(f"开始迭代微调流程，初始迭代k={self.k}")
-        
-        while self.k < self.max_iterations:
-            print(f"\n=== 迭代k={self.k} ===")
-            
-            M_ft = self._fine_tune_models()
-            current_models = self.M[self.k]
-            need_refine_D = False 
-            satisfy_model = None 
-            keep_models = []   
-            
-            for idx, model in enumerate(current_models):
-                loss_info = self._compute_combined_loss(model, self.D[self.k])
-                L_j = loss_info["L_j"]
-                label_loss = loss_info["label_loss"]
-                print(f"模型{idx}：组合损失L_j={L_j:.4f}，标签损失={label_loss:.4f}")
-                
-                if label_loss > self.L_b:
-                    print(f"模型{idx}：标签损失>{self.L_b}，移除（隐含逻辑，保证标签任务基础精度）")
-                    continue
-                  
-                if L_j > self.L_h:
-                    print(f"模型{idx}：L_j>{self.L_h}，从模型集合移除")
-                    continue
-                
-                if L_j < self.L_l:
-                    print(f"模型{idx}：L_j<{self.L_l}，满足要求，终止迭代")
-                    satisfy_model = model
-                    break
-                
-                if self.L_l <= L_j <= self.L_h:
-                    print(f"模型{idx}：L_j在[{self.L_l},{self.L_h}]区间，保留模型并标记数据集优化")
-                    keep_models.append(model)
-                    need_refine_D = True
-            
-            if satisfy_model is not None:
-                final_D = self.D[self.k]  # D_train = D(k)（算法Step 29）
-                self._save_final_results(satisfy_model, final_D)
-                print("\n算法流程终止：找到满足要求的模型和数据集")
-                return {
-                    "satisfactory_models": [satisfy_model],
-                    "D_train": final_D,
-                    "iteration": self.k
-                }
-            
-            if need_refine_D:
-                self.D[self.k+1] = self._refine_dataset(self.D[self.k])
-                print(f"迭代k={self.k}：生成优化后数据集D({self.k+1})")
-            else:
-                self.D[self.k+1] = self.D[self.k]
-                print(f"迭代k={self.k}：无需优化数据集，D({self.k+1})=D({self.k})")
-            
-            self.M[self.k+1] = M_ft if len(M_ft) > 0 else keep_models
-            print(f"迭代k={self.k}：更新模型集合M({self.k+1})_s，共{len(self.M[self.k+1])}个模型")
-            
-            self.k += 1
-            print(f"迭代k={self.k-1}完成，进入迭代k={self.k}")
-        
-        print(f"\n达到最大迭代次数{self.max_iterations}，算法流程终止")
-        self._save_final_results(self.M[self.k], self.D[self.k])
-        return {
-            "satisfactory_models": self.M[self.k],
-            "D_train": self.D[self.k],
-            "iteration": self.k
+    }
+    
+    int result = 0;
+    for (size_t i = 0; i < array_size; i++) {
+        result += input_array[i];
+        if (result < 0) {
+            break;
         }
+    }
+    
+    free(buffer);
+    return result;
+}
 
+### Response:"""
+    
+    inputs = tokenizer(eval_prompt, return_tensors="pt").to("cuda")
+    text_streamer = TextStreamer(tokenizer)
+    print("Model output:")
+    _ = model.generate(**inputs, streamer=text_streamer, max_new_tokens=600, use_cache=True)
+    
+    test_gpu_memory = get_gpu_memory()
+    print(f"GPU memory usage during {test_name}: {test_gpu_memory} GB")
 
-    def _save_final_results(self, models, dataset):
-        # 保存达标模型
-        model_dir = os.path.join(self.output_dir, "satisfactory_models")
-        os.makedirs(model_dir, exist_ok=True)
-        if isinstance(models, list):
-            for idx, model in enumerate(models):
-                model.save_pretrained(os.path.join(model_dir, f"model_{idx}"))
-        else:
-            models.save_pretrained(model_dir)
-        self.tokenizer.save_pretrained(model_dir)
+# ------------------------------------------------------------------------------
+# 5. Data Processing Transition
+# ------------------------------------------------------------------------------
+def prepare_next_iter_data(current_iteration: int, train_data: Dataset, val_data: Dataset) -> tuple[str, str]:
+    """
+    Prepares data for next iteration with explicit basic cleaning steps
+    Includes duplicate removal and null filtering with detailed implementation
+    """
+    next_train_path = os.path.join(data_process_dir, f"train_processed_iter{current_iteration+1}.csv")
+    next_val_path = os.path.join(data_process_dir, f"val_processed_iter{current_iteration+1}.csv")
+    
+    # Check if processed data already exists
+    if os.path.exists(next_train_path) and os.path.exists(next_val_path):
+        print(f"Detected processed data for Iteration {current_iteration+1}, loading directly")
+        return next_train_path, next_val_path
+    
+    print(f"\nBasic data processing for Iteration {current_iteration} started...")
+    
+    # --------------------------
+    # 1. Explicit basic cleaning
+    # --------------------------
+    print("Performing basic cleaning steps:")
+    
+    # 1.1 Null filtering implementation
+    print("   - Removing null/empty text samples...")
+    initial_train_count = len(train_data)
+    initial_val_count = len(val_data)
+    
+    # Filter out samples where text is None or empty/whitespace
+    train_data = train_data.filter(
+        lambda x: x["text"] is not None and len(str(x["text"]).strip()) > 0
+    )
+    val_data = val_data.filter(
+        lambda x: x["text"] is not None and len(str(x["text"]).strip()) > 0
+    )
+    
+    # Calculate and report null filtering results
+    train_null_removed = initial_train_count - len(train_data)
+    val_null_removed = initial_val_count - len(val_data)
+    print(f"   - Removed {train_null_removed} null/empty samples from training set")
+    print(f"   - Removed {val_null_removed} null/empty samples from validation set")
+    
+    # 1.2 Duplicate removal implementation
+    print("   - Removing duplicate samples...")
+    initial_train_clean = len(train_data)
+    initial_val_clean = len(val_data)
+    
+    # Remove duplicate entries based on text field
+    train_data = train_data.unique("text")
+    val_data = val_data.unique("text")
+    
+    # Calculate and report duplicate removal results
+    train_dups_removed = initial_train_clean - len(train_data)
+    val_dups_removed = initial_val_clean - len(val_data)
+    print(f"   - Removed {train_dups_removed} duplicate samples from training set")
+    print(f"   - Removed {val_dups_removed} duplicate samples from validation set")
+    
+    # Report final cleaning statistics
+    print(f"   - Training set after cleaning: {len(train_data)} samples")
+    print(f"   - Validation set after cleaning: {len(val_data)} samples")
+    
+    # Save intermediate cleaned data (before manual augmentation)
+    temp_train_path = os.path.join(data_process_dir, f"train_cleaned_temp_iter{current_iteration}.csv")
+    temp_val_path = os.path.join(data_process_dir, f"val_cleaned_temp_iter{current_iteration}.csv")
+    train_data.to_csv(temp_train_path, index=False)
+    val_data.to_csv(temp_val_path, index=False)
+    print(f"   - Intermediate cleaned data saved to: {temp_train_path} and {temp_val_path}")
+    
+    # --------------------------
+    # 2. Manual optimization steps
+    # --------------------------
+    print("\nData optimization tips:")
+    print("   1. Basic cleaning completed (duplicate removal / null filtering)")
+    print("   2. Supplementary steps needed:")
+    print("      - Manual data augmentation (add diverse vulnerability scenarios)")
+    print("      - Label correction (verify and fix vulnerability annotations)")
+    
+    # Wait for user confirmation
+    while True:
+        user_input = input("   Confirm data has been saved (enter 'y' to continue): ").strip().lower()
+        if user_input == 'y':
+            break
+        print("   Please complete data processing and save to specified paths first, then confirm to continue")
+    
+    # Validate file existence
+    while not (os.path.exists(next_train_path) and os.path.exists(next_val_path)):
+        print(f"Data files not detected, please check paths: {next_train_path} and {next_val_path}")
+        time.sleep(2)
+    
+    print(f"Data preparation for Iteration {current_iteration+1} completed")
+    return next_train_path, next_val_path
+    
+# ------------------------------------------------------------------------------
+# 6. Single Iteration Training and Evaluation
+# ------------------------------------------------------------------------------
+def train_single_iteration(iteration: int, model, tokenizer, train_data, val_data) -> tuple[float, SFTTrainer]:
+    run_name = f"iter{iteration}_{selected_model.split('/')[-1]}_{datetime.now().strftime('%Y%m%d_%H%M')}"
+    training_args = TrainingArguments(
+        output_dir=os.path.join(output_root, run_name),
+        per_device_train_batch_size=2,
+        gradient_accumulation_steps=2,
+        warmup_steps=5,
+        max_steps=500,
+        learning_rate=5e-4,
+        fp16=not torch.cuda.is_bf16_supported(),
+        bf16=torch.cuda.is_bf16_supported(),
+        logging_steps=10,
+        optim="adamw_8bit",
+        weight_decay=0.01,
+        lr_scheduler_type="linear",
+        seed=3407,
+        save_strategy="steps",
+        save_steps=100,
+        eval_strategy="steps",
+        eval_steps=50,
+        report_to="wandb" if wandb.run else None,
+        run_name=run_name,
+        load_best_model_at_end=True,
+        metric_for_best_model="eval_loss",
+        greater_is_better=False
+    )
+    
+    trainer = SFTTrainer(
+        model=model,
+        tokenizer=tokenizer,
+        train_dataset=train_data,
+        eval_dataset=val_data,
+        dataset_text_field="text",
+        max_seq_length=2048,
+        dataset_num_proc=2,
+        packing=False,
+        args=training_args,
+    )
+    
+    print(f"\nStarting Iteration {iteration} training, current GPU memory: {get_gpu_memory()} GB")
+    trainer_stats = trainer.train()
+    
+    eval_metrics = trainer.evaluate()
+    current_loss = eval_metrics["eval_loss"]
+    print(f"\n=== Iteration {iteration} Completed ===")
+    print(f"Current loss Lj = {current_loss:.4f} | Thresholds: Ll={Ll}, Lh={Lh}")
+    
+    peak_train_memory = round(torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024, 3)
+    print(f"Peak GPU memory in Iteration {iteration}: {peak_train_memory} GB / Total memory: {max_gpu_memory} GB")
+    return current_loss, trainer, trainer_stats
+
+# ------------------------------------------------------------------------------
+# 7. Main Logic for Iterative Refinement
+# ------------------------------------------------------------------------------
+wandb.init(project="iterative-qlora-finetune", name=f"main-run-{selected_model.split('/')[-1]}", reinit=True)
+
+train_data, val_data = load_and_basic_clean(current_iteration)
+
+print("\n==================== Pre-training Model Test ====================")
+init_model, init_tokenizer = load_qlora_model(selected_model)
+test_model_performance(init_model, init_tokenizer, test_name="Pre-training Test")
+del init_model
+torch.cuda.empty_cache()
+
+while current_iteration <= max_iterations:
+    print(f"\n==================== Iteration {current_iteration}/{max_iterations} ====================")
+    
+    model, tokenizer = load_qlora_model(selected_model)
+    
+    current_loss, trainer, trainer_stats = train_single_iteration(
+        current_iteration, model, tokenizer, train_data, val_data
+    )
+    
+    if current_loss < Ll:
+        print(f"Iteration {current_iteration}: Lj < Ll, model meets standards!")
+        best_model_path = os.path.join(output_root, f"best_model_iter{current_iteration}")
+        trainer.model.save_pretrained(best_model_path)
+        tokenizer.save_pretrained(best_model_path)
+        print(f"Best model saved to: {best_model_path}")
         
-        # 保存最终数据集
-        dataset_path = os.path.join(self.output_dir, "D_train.json")
-        with open(dataset_path, "w", encoding="utf-8") as f:
-            json.dump(dataset.to_list(), f, indent=2, ensure_ascii=False)
+        print("\n==================== Post-training Best Model Test ====================")
+        base_model = AutoModelForCausalLM.from_pretrained(
+            selected_model,
+            low_cpu_mem_usage=True,
+            return_dict=True,
+            torch_dtype=torch.bfloat16,
+            device_map={"": 0},
+            bitsandbytes_config=bnb_config
+        )
+        best_merged_model = PeftModel.from_pretrained(base_model, best_model_path)
+        best_merged_model = best_merged_model.merge_and_unload()
+        test_model_performance(best_merged_model, tokenizer, test_name="Post-training Best Model Test")
+        break
+    
+    elif current_loss > Lh:
+        print(f"Iteration {current_iteration}: Lj > Lh, model failed to learn effectively, discarding!")
+        print("Please check: 1. Data quality 2. Learning rate 3. Model compatibility")
+        next_train_path, next_val_path = prepare_next_iter_data(current_iteration)
+        train_data, val_data = load_and_basic_clean(current_iteration + 1, next_train_path, next_val_path)
+        current_iteration += 1
+        del model
+        torch.cuda.empty_cache()
+    
+    else:
+        print(f"Iteration {current_iteration}: Medium loss, starting data optimization process...")
+        temp_model_path = os.path.join(output_root, f"temp_model_iter{current_iteration}")
+        trainer.model.save_pretrained(temp_model_path)
+        tokenizer.save_pretrained(temp_model_path)
+        print(f"Temporary model saved to: {temp_model_path}")
         
-        print(f"达标模型保存至：{model_dir}")
-        print(f"最终数据集保存至：{dataset_path}")
+        refined_train, refined_val = prepare_next_iter_data(current_iteration)
+        
+        train_data, val_data = load_and_basic_clean(current_iteration + 1, refined_train, refined_val)
+        current_iteration += 1
+        del model
+        torch.cuda.empty_cache()
 
+# ------------------------------------------------------------------------------
+# 8. Final Training Statistics
+# ------------------------------------------------------------------------------
+print("\n==================== Final Training Statistics ====================")
+final_gpu_memory = get_gpu_memory()
+peak_total_memory = round(torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024, 3)
+print(f"Initial GPU memory: {start_gpu_memory} GB")
+print(f"Final GPU memory: {final_gpu_memory} GB")
+print(f"Peak GPU memory: {peak_total_memory} GB / Total memory: {max_gpu_memory} GB")
+print(f"Peak memory usage: {round(peak_total_memory/max_gpu_memory*100, 2)}%")
 
+if 'trainer_stats' in locals():
+    train_time = round(trainer_stats.metrics['train_runtime'], 2)
+    train_minutes = round(train_time / 60, 2)
+    print(f"Total training time: {train_time} seconds ({train_minutes} minutes)")
+    print(f"Average training speed: {round(trainer_stats.metrics['train_samples_per_second'], 2)} samples/second")
+
+wandb.finish()
